@@ -24,4 +24,4 @@ requires:
 resources:
   bugtracker: https://github.com/hoytech/Vcdiff/issues
   repository: git://github.com/hoytech/Vcdiff.git
-version: 0.100
+version: 0.504
