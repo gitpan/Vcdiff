@@ -5,31 +5,21 @@ use strict;
 use Symbol;
 use Carp;
 
-our $VERSION = '0.504';
+our $VERSION = '0.505';
 
 
-## This variable indicates what backend should be used. It should
+## This variable indicates which backend should be used. It should
 ## be a package name such as "Vcdiff::Xdelta3".
 
 our $backend;
 
 
 ## When new backends are added, this should be updated so that
-## the new backend will be probed for when none are already loaded.
+## the new backend will be probed for.
 
 our @known_backends = qw(
   Vcdiff::Xdelta3
   Vcdiff::OpenVcdiff
-);
-
-
-## These packages should be skipped when looking for a backend
-## because they are internal to this distribution and share the
-## Vcdiff namespace. In hindsight it might have been a good idea
-## to give the backends their own namespace such as Vcdiff::Backend.
-
-my @internal_packages = qw (
-  Test
 );
 
 
@@ -59,7 +49,8 @@ sub which_backend {
 }
 
 sub _load_backend {
-  ## If a backend is set, make sure it is loaded:
+
+  ## If a backend is set, make sure it's loaded or die trying:
 
   if (defined $backend) {
     eval "require $backend";
@@ -69,11 +60,13 @@ sub _load_backend {
 
   ## If a backend has already been loaded but not set, set it:
 
-  foreach my $k (keys %INC) {
-    if ($k =~ m{^Vcdiff/([^.]+)}) {
-      my $pm = $1;
-      next if grep { $pm eq $_ } @internal_packages;
-      $backend = "Vcdiff::$pm";
+  foreach my $backend_candidate (@known_backends) {
+    no strict "refs";
+    my $ver = ${qualify("VERSION", $backend_candidate)};
+    if (${ qualify("VERSION", $backend_candidate) }) {
+      eval "require $backend_candidate";
+      next if $@;
+      $backend = $backend_candidate;
       return;
     }
   }
@@ -119,11 +112,11 @@ B<In order to use this module you must install one or more backend modules (see 
 
 =head1 DESCRIPTION
 
-Given source and target data, the C<Vcdiff::diff> function computes a "delta" that encodes the information needed to turn source into target. Anyone who has the source and delta can derive the target with the C<Vcdiff::patch> function.
+Given source and target data, the C<Vcdiff::diff> function computes a "delta" that encodes the difference information needed to turn source into target. Anyone who has source and delta can derive target with the C<Vcdiff::patch> function.
 
 The point of this module is that if the source and target inputs are related then delta can be small relative to target, meaning it may be more efficient to send delta updates to clients over the network instead of re-sending the whole target every time.
 
-Even though source and target don't necessarily have to be binary data (regular data is fine too), the delta will contain binary data including NUL bytes so if your transport protocols don't support this you will have to encode or escape it in some way (ie Base64). Compressing the delta before you do this might be worthwhile depending on the size of your changes and the entropy of your data.
+Even though source and target don't necessarily have to be binary data (regular data is fine too), the delta will contain binary data including NUL bytes so if your transport protocols don't support this you will have to encode or escape the delta in some way (ie base64). Compressing the delta before you do this might be worthwhile depending on the size of your changes and the entropy of your data.
 
 The delta format is described by L<RFC 3284|http://www.faqs.org/rfcs/rfc3284.html>, "The VCDIFF Generic Differencing and Compression Data Format".
 
@@ -134,7 +127,7 @@ The delta format is described by L<RFC 3284|http://www.faqs.org/rfcs/rfc3284.htm
 
 L<Vcdiff> is "the DBI" of VCDIFF implementations.
 
-L<Vcdiff> doesn't itself implement delta compression. Instead, it provides a consistent interface to various open-source VCDIFF (RFC 3284) implementations. The implementation libraries it interfaces to are called "backends". You must install at least one backend in order to use L<Vcdiff>.
+This module doesn't itself implement delta compression. Instead, it provides a consistent interface to various open-source VCDIFF (RFC 3284) implementations. The implementation libraries it interfaces to are called "backends". You must install at least one backend.
 
 The currently supported backends are described below. See the POD documentation in the backend module distributions for more details on the pros and cons of each backend.
 
@@ -145,7 +138,7 @@ In order to choose which backend to use, L<Vcdiff> will first check to see if th
         $delta = Vcdiff::diff($source, $target);
     }
 
-Otherwise, L<Vcdiff> will check to see if any backends have been loaded already in the following order: B<Xdelta3, OpenVcdiff>. If so, it will choose the first one it finds:
+Otherwise, it will check to see if any backends have been loaded already in the following order: B<Xdelta3, OpenVcdiff>. If so, it will choose the first one it finds:
 
     use Vcdiff::Xdelta3;
     $delta = Vcdiff::diff($source, $target);
@@ -154,28 +147,7 @@ If it doesn't find any loaded backends, it will try to load them in the same ord
 
 Finally, if no backends can be loaded, an exception is thrown.
 
-The backend that will be used can be determined with C<Vcdiff::which_backend()>.
-
-
-
-=head2 Dependency Recommendations
-
-Unless you are relying on features supported only in a specific backend, it's recommended that code that uses L<Vcdiff> be backend-agnostic like this:
-
-    use Vcdiff;
-    print Vcdiff::diff("hello", "hello world");
-
-Instead of:
-
-    use Vcdiff::Xdelta3;
-    print Vcdiff::Xdelta3::diff("hello", "hello world");
-
-That way the selection of which backend to use is as dynamic as possible.
-
-If you're writing a module that depends on L<Vcdiff>, pick a backend and add that backend's package (ie C<Vcdiff::Xdelta3>) to your module's dependency list. This way a (sophisticated) user can force a different backend at install-time if the one you chose doesn't work for whatever reason.
-
-Even more importantly, writing backend-agnostic code allows users of your module to choose which backend to use by setting C<$Vcdiff::backend> (or localising as described above). Backend-agnostic code also permits the flexibility of using one backend for diffing and another for patching (by localising C<$Vcdiff::backend> for specific operations).
-
+The backend that will be used can be determined by calling C<Vcdiff::which_backend()>.
 
 
 =head2 BACKEND: Xdelta3
@@ -190,13 +162,32 @@ The L<Vcdiff::OpenVcdiff> backend module depends on L<Alien::OpenVcdiff> which c
 
 =head2 Future Backends
 
-Another possible candidate would be Kiem-Phong Vo's L<Vcodex|http://www2.research.att.com/~gsf/download/ref/vcodex/vcodex.html> utility which contains a vcdiff implementation.
+Another possible candidate would be Kiem-Phong Vo's L<Vcodex|http://www2.research.att.com/~gsf/download/ref/vcodex/vcodex.html> utility which contains a VCDIFF implementation.
 
 A really cool project would be a pure-perl VCDIFF implementation that could be used in environments that are unable to compile XS modules.
 
 In the future I plan to build a L<Vcdiff::DumbDiffer> module (name undecided) that will completely ignore the source and create a delta that embeds the entire target. Obviously this defeats the purpose of delta compression but will allow deltas to be generated really fast. This will be useful because protocols that frequently replace the entire content won't need a special case for this.
 
 
+
+
+=head1 BACKEND-AGNOSTIC CODE
+
+Unless you are relying on features supported only by a specific backend, it's recommended that code that uses L<Vcdiff> be backend-agnostic like this:
+
+    use Vcdiff;
+    print Vcdiff::diff("hello", "hello world");
+
+Instead of:
+
+    use Vcdiff::Xdelta3;
+    print Vcdiff::Xdelta3::diff("hello", "hello world");
+
+That way the selection of which backend to use is as dynamic as possible.
+
+If you're writing a module that depends on L<Vcdiff>, pick a backend and add that backend's package (ie C<Vcdiff::Xdelta3>) to your module's dependency list. This way a (sophisticated) user can force a different backend at install-time if the one you chose doesn't work for whatever reason.
+
+Even more importantly, writing backend-agnostic code allows users of your module to choose which backend to use by setting C<$Vcdiff::backend> before calling your module's routines. Backend-agnostic code also permits the flexibility of using one backend for diffing and another for patching by localising C<$Vcdiff::backend> for specific operations.
 
 
 
@@ -220,7 +211,7 @@ In order to fully take advantage of streaming, either or both of the source and 
 
     Vcdiff::diff($source_fh, $target_fh, $delta_fh);
 
-Note that in all current backends if the source parameter is a file handle it must be backed by an C<lseek(2)>able and/or C<mmap(2)>able file descriptor (in other words, a real file, not a pipe or socket). Vcdiff will throw an exception if the source file handle is unsuitable.
+Note that in all current backends if the source parameter is a file handle it must be backed by an C<lseek(2)>able and/or C<mmap(2)>able file descriptor (in other words it must be a real file, not a pipe or socket). Vcdiff will throw an exception if the source file handle is unsuitable.
 
 
 
@@ -228,11 +219,11 @@ Note that in all current backends if the source parameter is a file handle it mu
 
 =head1 MEMORY MAPPED INPUTS
 
-If the source or target/delta data is in a file, an alternative to the streaming API is to map the files into memory with C<mmap(2)> and then pass the mappings in to C<diff>/C<patch> as strings.
+If the source and/or target/delta are in files, an alternative to the streaming API is to map the files into memory with C<mmap(2)> and then pass the mappings in to C<diff>/C<patch> as strings.
 
-Doing so is more efficient than the streaming API for large files because fewer system calls are made and a kernel-space to user-space copy is avoided. However, as mentioned above, files that are too large to fit in your virtual address must be diffed with the streaming API (this is only an issue when diffing multi-gigabyte files on 32 bit systems).
+Doing so is more efficient than the streaming API for large files because fewer system calls are made and a kernel-space to user-space copy is avoided. However, as mentioned above, files that are too large to fit in your virtual address space must be diffed with the streaming API (this will only come up when working with multi-gigabyte files on 32 bit systems).
 
-Here is an example using L<Sys::Mmap>:
+Here is an example using L<Sys::Mmap> (doesn't handle resource leaks in the case of exceptions):
 
     use Sys::Mmap;
 
@@ -250,7 +241,7 @@ Here is an example using L<Sys::Mmap>:
     munmap($source_str);
     munmap($target_str);
 
-Note that the L<Vcdiff::OpenVcdiff> module does this under the hood for source if it is a file handle.
+Note that under the hood the L<Vcdiff::OpenVcdiff> backend uses L<Sys::Mmap> for source file handles.
 
 
 
@@ -290,9 +281,9 @@ The S/M indicators show which API combination is being used in the order of sour
 
 The point of this test is to verify that the deltas produced by each backend are compatible will all other backends. For each combination of backend, all the L<streaming()> tests above are run.
 
-Note that currently no backend-specific extensions like checksums or interleaving are enabled.
+Since the VCDIFF standard defines a data format, even though backends may use very different encoding algorithms their outputs should still be compatible. By default L<Vcdiff> tries to be RFC 3284 compatible so no backend-specific extensions like checksums or interleaving are enabled.
 
-This test isn't run by default because it needs to have all backends installed.
+This test has to be run manually because it needs to have all C<@Vcdiff::known_backends> installed.
 
 
 
